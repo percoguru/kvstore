@@ -1,69 +1,81 @@
-use std::collections::HashMap;
-use std::io::{self, Write};
+mod kv_store;
 
-/// A simple in-memory key-value store
-struct KvStore {
-    store: HashMap<String, String>,
+use clap::{Parser, Subcommand};
+use kv_store::KvStore;
+
+#[derive(Parser)]
+#[command(name = "kvstore")]
+#[command(about = "A simple key-value store", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
 }
 
-impl KvStore {
-    /// Create a new, empty KvStore
-    fn new() -> Self {
-        KvStore {
-            store: HashMap::new(),
-        }
-    }
-
+#[derive(Subcommand)]
+enum Commands {
     /// Set a key to a value
-    fn set(&mut self, key: String, value: String) {
-        self.store.insert(key, value);
-    }
-
-    /// Get the value associated with a key
-    fn get(&self, key: String) -> Option<&String> {
-        self.store.get(&key)
-    }
+    Set { key: String, value: String },
+    /// Get the value of a key
+    Get { key: String },
+    /// Remove a key
+    Delete { key: String },
 }
 
 fn main() {
-    let mut kv = KvStore::new(); // Create the key-value store
-
-    println!("Minimal KV Store");
-    println!("Usage: set <key> <value> | get <key> | exit");
-
-    loop {
-        // Print the prompt
-        print!("> ");
-        io::stdout().flush().unwrap();
-
-        // Read input from stdin
-        let mut line = String::new();
-        if io::stdin().read_line(&mut line).is_err() {
-            println!("Failed to read input.");
-            continue;
-        }
-
-        // Split the input into parts: command, key, value
-        let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
-
-        match parts.as_slice() {
-            // Handle `set key value` command
-            ["set", key, value] => {
-                kv.set(key.to_string(), value.to_string());
-                println!("OK");
+    let kv = match KvStore::new() {
+            Ok(store) => store,
+            Err(e) => {
+                eprintln!("Failed to initialize KvStore: {}", e);
+                return;
             }
-
-            // Handle `get key` command
-            ["get", key] => match kv.get(key.to_string()) {
+        };
+    // Check if only the program name is present (no CLI args)
+    if std::env::args().len() == 1 {
+        // Interactive shell mode
+        use std::io::{self, Write};
+        println!("kvstore interactive mode. Type 'help' for commands.");
+        loop {
+            print!("> ");
+            io::stdout().flush().unwrap();
+            let mut input = String::new();
+            if io::stdin().read_line(&mut input).is_err() {
+                break;
+            }
+            let parts: Vec<_> = input.trim().split_whitespace().collect();
+            match parts.as_slice() {
+                ["set", key, value] => match kv.set(key.to_string(), value.to_string()) {
+                    Ok(_) => println!("OK"),
+                    Err(e) => println!("Error: {}", e),
+                },
+                ["get", key] => match kv.get(key.to_string()) {
+                    Some(value) => println!("{}", value),
+                    None => println!("Key not found"),
+                },
+                ["delete", key] => match kv.remove(key.to_string()) {
+                    Ok(_) => println!("OK"),
+                    Err(e) => println!("Error: {}", e),
+                },
+                ["exit"] | ["quit"] => break,
+                ["help"] => println!("Commands: set <key> <value>, get <key>, delete <key>, exit"),
+                _ => println!("Unknown command. Type 'help' for commands."),
+            }
+        }
+    } else {
+        // CLI mode (parse args with clap)
+        let cli = Cli::parse();
+        match cli.command {
+            Commands::Set { key, value } => match kv.set(key, value) {
+                Ok(_) => println!("OK"),
+                Err(e) => eprintln!("Error: {}", e),
+            },
+            Commands::Get { key } => match kv.get(key) {
                 Some(value) => println!("{}", value),
                 None => println!("Key not found"),
-            }
-
-            // Handle `exit` command
-            ["exit"] => break,
-
-            // Handle unknown commands
-            _ => println!("Unknown command"),
+            },
+            Commands::Delete { key } => match kv.remove(key) {
+                Ok(_) => println!("OK"),
+                Err(e) => eprintln!("Error: {}", e),
+            },
         }
     }
 }
